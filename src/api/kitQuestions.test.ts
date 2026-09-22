@@ -476,4 +476,73 @@ describe("Question Management Backend APIs", () => {
       expect(data.questions.every((x: StoredQuestion) => x.edited === false)).toBe(true);
     });
   });
+
+  // ---- 5. PRACTICE PROGRESS ----
+  describe("5. Practice recording", () => {
+    it("persists seen + confidence and reflects it in the practice feed", async () => {
+      const question: StoredQuestion = {
+        id: "q1",
+        prompt: "What is a closure?",
+        answer_outline: "",
+        category: "technical",
+        difficulty: 2,
+        requirement_ids: [],
+        origin: "generated",
+        edited: false,
+        pinned: false,
+        order: 0,
+      };
+      const record = await repo.create({
+        userId: "user-1",
+        title: "Kit",
+        input: { jd: "jd", company_url: "https://example.com", days: 3 },
+        inputHash: "practice-hash",
+      });
+      await repo.setKitForUser(record.id, "user-1", makeStoredKit([question]));
+
+      // Unseen to start.
+      const before = await (
+        await req("GET", `/kits/${record.id}/practice`, { token: tokenFor("user-1") })
+      ).json();
+      expect(before.items[0]).toMatchObject({ id: "q1", seen: false, confidence: null });
+
+      // Record a confidence rating.
+      const rec = await req("POST", `/kits/${record.id}/practice/q1`, {
+        token: tokenFor("user-1"),
+        body: { confidence: 4 },
+      });
+      expect(rec.status).toBe(200);
+      const recData = await rec.json();
+      expect(recData.practiceState).toMatchObject({ seen: true, confidence: 4 });
+
+      // Now the feed shows it as seen with the saved confidence.
+      const after = await (
+        await req("GET", `/kits/${record.id}/practice`, { token: tokenFor("user-1") })
+      ).json();
+      const q1 = after.items.find((x: { id: string }) => x.id === "q1");
+      expect(q1).toMatchObject({ seen: true, confidence: 4 });
+    });
+
+    it("rejects an out-of-range confidence and unknown items", async () => {
+      const record = await repo.create({
+        userId: "user-1",
+        title: "Kit",
+        input: { jd: "jd", company_url: "https://example.com", days: 3 },
+        inputHash: "practice-hash-2",
+      });
+      await repo.setKitForUser(record.id, "user-1", makeStoredKit([]));
+
+      const bad = await req("POST", `/kits/${record.id}/practice/whatever`, {
+        token: tokenFor("user-1"),
+        body: { confidence: 9 },
+      });
+      expect(bad.status).toBe(400);
+
+      const missing = await req("POST", `/kits/${record.id}/practice/nope`, {
+        token: tokenFor("user-1"),
+        body: { confidence: 3 },
+      });
+      expect(missing.status).toBe(404);
+    });
+  });
 });

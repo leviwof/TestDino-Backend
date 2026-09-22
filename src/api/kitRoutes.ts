@@ -69,6 +69,11 @@ const RegenerateBody = z.object({
     .optional(),
 });
 
+/** Record practice progress for a single item (1–5 self-rated confidence). */
+const RecordPracticeBody = z.object({
+  confidence: z.coerce.number().int().min(1).max(5),
+});
+
 const UpdateQuestionBody = z.object({
   prompt: z.string().min(1).optional(),
   answer_outline: z.string().optional(),
@@ -677,6 +682,51 @@ export function createKitRouter(deps: KitRouterDeps = {}): Router {
         practice: items,
         practiceItems: items,
         total: items.length,
+      });
+    }),
+  );
+
+  // Record practice progress for one item (persists seen + confidence), so a
+  // user's coverage survives reloads and future sessions.
+  router.post(
+    "/:id/practice/:itemId",
+    asyncHandler(async (req, res) => {
+      const { confidence } = RecordPracticeBody.parse(req.body ?? {});
+      const uid = userId(req);
+      const record = await kits.findByIdForUser(req.params.id, uid);
+      if (!record) throw httpError(404, "not_found", "kit not found");
+      if (!record.kit) {
+        throw httpError(409, "not_generated", "kit has not been generated yet");
+      }
+
+      const { itemId } = req.params;
+      const question = record.kit.questions.find((q) => q.id === itemId);
+      const flashcard = (record.kit.flashcards ?? []).find((f) => f.id === itemId);
+      const target = (question ?? flashcard) as
+        | (Record<string, unknown> & { id: string })
+        | undefined;
+      if (!target) {
+        throw httpError(404, "item_not_found", "practice item not found in kit");
+      }
+
+      // Store under practiceState so it never collides with content fields and
+      // is picked up by defaultIsSeen / defaultGetConfidence on the next read.
+      const prevAttempts =
+        typeof (target.practiceState as { attempts?: number } | undefined)?.attempts === "number"
+          ? (target.practiceState as { attempts: number }).attempts
+          : 0;
+      target.practiceState = {
+        seen: true,
+        confidence,
+        attempts: prevAttempts + 1,
+        updatedAt: new Date().toISOString(),
+      };
+
+      await kits.setKitForUser(record.id, uid, record.kit);
+      res.status(200).json({
+        id: itemId,
+        type: question ? "question" : "flashcard",
+        practiceState: target.practiceState,
       });
     }),
   );
