@@ -215,6 +215,45 @@ describe("Kit HTTP API — POST /kits, GET /kits/:id", () => {
     expect((await res.json()).kits).toEqual([]);
     expect((await req("GET", "/kits")).status).toBe(401);
   });
+
+  it("POST /kits/batch creates several kits at once, scoped to the caller", async () => {
+    const res = await req("POST", "/kits/batch", {
+      token: tokenFor("owner-1"),
+      body: {
+        items: [
+          { jd: "Backend Engineer. Node, Postgres.", company_url: "https://a.example.com", days: 5 },
+          { jd: "Frontend Engineer. React, TS.", company_url: "https://b.example.com", days: 3 },
+        ],
+      },
+    });
+    expect(res.status).toBe(201);
+    const data = await res.json();
+    expect(data).toMatchObject({ total: 2, created: 2, duplicates: 0, failed: 0 });
+    expect(data.results).toHaveLength(2);
+    expect(data.results[0]).toMatchObject({ ok: true, existed: false });
+    expect(repo.records.every((r) => r.userId === "owner-1")).toBe(true);
+    expect(repo.records).toHaveLength(2);
+  });
+
+  it("POST /kits/batch reports duplicates idempotently and rejects an empty list", async () => {
+    const item = { jd: "Backend Engineer. Node.", company_url: "https://a.example.com", days: 5 };
+    await req("POST", "/kits", { token: tokenFor("owner-1"), body: item });
+
+    const res = await req("POST", "/kits/batch", {
+      token: tokenFor("owner-1"),
+      body: { items: [item] },
+    });
+    expect(res.status).toBe(201);
+    const data = await res.json();
+    expect(data).toMatchObject({ total: 1, created: 0, duplicates: 1, failed: 0 });
+    expect(repo.records).toHaveLength(1);
+
+    const bad = await req("POST", "/kits/batch", {
+      token: tokenFor("owner-1"),
+      body: { items: [] },
+    });
+    expect(bad.status).toBe(400);
+  });
 });
 
 describe("Kit HTTP API — POST /kits/:id/regenerate", () => {

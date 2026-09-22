@@ -56,6 +56,12 @@ const CreateKitBody = z.object({
   title: z.string().min(1).optional(),
 });
 
+/** Batch submit: a list of description-and-company pairs (capped to keep one
+ *  request bounded). Each item is validated exactly like a single create. */
+const BatchCreateBody = z.object({
+  items: z.array(CreateKitBody).min(1).max(25),
+});
+
 const UpdateQuestionBody = z.object({
   prompt: z.string().min(1).optional(),
   answer_outline: z.string().optional(),
@@ -400,6 +406,82 @@ export function createKitRouter(deps: KitRouterDeps = {}): Router {
   // Protect every kit route with the existing JWT guard.
   router.use(requireAuth(deps.auth ?? {}));
 
+  /**
+   * Create a single kit and enqueue its generation job (idempotent per user).
+   * Shared by POST / and POST /batch. `existed` is true when an identical kit
+   * already existed (so batch can report created-vs-duplicate); no second job
+   * or pipeline run is started in that case.
+   */
+  async function createOneKit(
+    uid: string,
+    input: KitInput,
+    title?: string,
+  ): Promise<{
+    kitId: string;
+    jobId?: string;
+    status: string;
+    kit: ReturnType<typeof toDto>;
+    existed: boolean;
+  }> {
+    // Deterministic idempotency key over the NORMALIZED input, scoped per user.
+    const inputHash = idempotencyHash(input);
+
+    const existing = await kits.findByUserAndHash(uid, inputHash);
+    if (existing) {
+      return {
+        kitId: existing.id,
+        jobId: existing.jobId ?? undefined,
+        status: existing.status,
+        kit: toDto(existing),
+        existed: true,
+      };
+    }
+
+    const finalTitle = title ?? `Interview kit — ${hostOf(input.company_url)}`;
+
+    let created: KitRecord;
+    try {
+      created = await kits.create({ userId: uid, title: finalTitle, input, inputHash });
+    } catch (err) {
+      // Concurrent duplicate: another identical request won the race.
+      if (err instanceof KitConflictError) {
+        const winner = await kits.findByUserAndHash(uid, inputHash);
+        if (winner) {
+          return {
+            kitId: winner.id,
+            jobId: winner.jobId ?? undefined,
+            status: winner.status,
+            kit: toDto(winner),
+            existed: true,
+          };
+        }
+      }
+      throw err;
+    }
+
+    // Enqueue an async generation job (status "queued") owned by the caller.
+    let job: JobInfo;
+    try {
+      job = await createJob({ userId: uid, kitId: created.id });
+    } catch (err) {
+      // Compensating rollback: don't leave a kit with no tracking job.
+      await kits.deleteByIdForUser(created.id, uid).catch(() => undefined);
+      throw err;
+    }
+
+    await kits.setJobId?.(created.id, uid, job.jobId);
+    // Kick off the background pipeline; do NOT await it.
+    startExecution({ jobId: job.jobId, kitId: created.id, userId: uid });
+
+    return {
+      kitId: created.id,
+      jobId: job.jobId,
+      status: job.status,
+      kit: toDto(created),
+      existed: false,
+    };
+  }
+
   router.post(
     "/",
     asyncHandler(async (req, res) => {
@@ -410,67 +492,78 @@ export function createKitRouter(deps: KitRouterDeps = {}): Router {
         company_url: body.company_url,
         days: body.days,
       };
-      // Deterministic idempotency key over the NORMALIZED input, scoped per user.
-      const inputHash = idempotencyHash(input);
+      const result = await createOneKit(uid, input, body.title);
+      res.status(result.existed ? 200 : 201).json({
+        kitId: result.kitId,
+        jobId: result.jobId,
+        status: result.status,
+        kit: result.kit,
+      });
+    }),
+  );
 
-      // Idempotent submit: if this user already has a kit for the same normalized
-      // input, return the existing kitId/jobId and do NOT start another pipeline.
-      const existing = await kits.findByUserAndHash(uid, inputHash);
-      if (existing) {
-        res.status(200).json({
-          kitId: existing.id,
-          jobId: existing.jobId ?? undefined,
-          status: existing.status,
-          kit: toDto(existing),
-        });
-        return;
-      }
+  // Batch create: prepare for several roles at once from a list of pairs.
+  router.post(
+    "/batch",
+    asyncHandler(async (req, res) => {
+      const { items } = BatchCreateBody.parse(req.body);
+      const uid = userId(req);
 
-      const title = body.title ?? `Interview kit — ${hostOf(body.company_url)}`;
-
-      let created: KitRecord;
-      try {
-        created = await kits.create({ userId: uid, title, input, inputHash });
-      } catch (err) {
-        // Concurrent duplicate: another identical request won the race. Return
-        // its record — do NOT create a second job or start the pipeline again.
-        if (err instanceof KitConflictError) {
-          const winner = await kits.findByUserAndHash(uid, inputHash);
-          if (winner) {
-            res.status(200).json({
-              kitId: winner.id,
-              jobId: winner.jobId ?? undefined,
-              status: winner.status,
-              kit: toDto(winner),
-            });
-            return;
+      const results: Array<
+        | {
+            index: number;
+            ok: true;
+            kitId: string;
+            jobId?: string;
+            status: string;
+            existed: boolean;
+            company_url: string;
           }
+        | { index: number; ok: false; error: string; message: string; company_url: string }
+      > = [];
+
+      // Sequential so a slow/failing item never blocks the rest, and to keep
+      // per-user job creation predictable. Each item is isolated.
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        const input: KitInput = {
+          jd: item.jd,
+          company_url: item.company_url,
+          days: item.days,
+        };
+        try {
+          const r = await createOneKit(uid, input, item.title);
+          results.push({
+            index: i,
+            ok: true,
+            kitId: r.kitId,
+            jobId: r.jobId,
+            status: r.status,
+            existed: r.existed,
+            company_url: item.company_url,
+          });
+        } catch (err) {
+          const anyErr = err as { code?: string };
+          results.push({
+            index: i,
+            ok: false,
+            error: anyErr.code ?? "error",
+            message: "Failed to create this kit.",
+            company_url: item.company_url,
+          });
         }
-        throw err;
       }
 
-      // Enqueue an async generation job (status "queued") owned by the caller.
-      // We return immediately; no crawler/LLM pipeline runs here.
-      let job: JobInfo;
-      try {
-        job = await createJob({ userId: uid, kitId: created.id });
-      } catch (err) {
-        // Compensating rollback: don't leave a kit with no tracking job.
-        await kits.deleteByIdForUser(created.id, uid).catch(() => undefined);
-        throw err;
-      }
-
-      // Link the job to the kit so a later idempotent hit can return the jobId.
-      await kits.setJobId?.(created.id, uid, job.jobId);
-
-      // Kick off the background pipeline; do NOT await it (POST returns now).
-      startExecution({ jobId: job.jobId, kitId: created.id, userId: uid });
+      const created = results.filter((r) => r.ok && !r.existed).length;
+      const duplicates = results.filter((r) => r.ok && r.existed).length;
+      const failed = results.filter((r) => !r.ok).length;
 
       res.status(201).json({
-        kitId: created.id,
-        jobId: job.jobId,
-        status: job.status,
-        kit: toDto(created),
+        total: items.length,
+        created,
+        duplicates,
+        failed,
+        results,
       });
     }),
   );
