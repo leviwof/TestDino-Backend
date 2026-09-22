@@ -315,6 +315,16 @@ describe("Kit HTTP API — POST /kits/:id/regenerate", () => {
       headers: token ? { authorization: `Bearer ${token}` } : {},
     });
 
+  const postBody = (path: string, token: string, body: unknown) =>
+    fetch(`${base}${path}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+    });
+
   it("returns 401 for an unauthenticated request", async () => {
     const res = await post("/kits/k1/regenerate");
     expect(res.status).toBe(401);
@@ -345,5 +355,24 @@ describe("Kit HTTP API — POST /kits/:id/regenerate", () => {
 
     // Persisted back to the store.
     expect(repo.records[0].kit?.questions.some((x) => x.prompt === "Freshly generated question")).toBe(true);
+  });
+
+  it("regenerating one section leaves the other sections untouched", async () => {
+    const res = await postBody("/kits/k1/regenerate", tokenFor("owner-1"), {
+      section: "flashcards",
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.section).toBe("flashcards");
+
+    // Flashcards were regenerated to the fresh set.
+    const fronts: string[] = body.kit.flashcards.map((f: { front: string }) => f.front);
+    expect(fronts).toContain("Fresh front");
+    expect(fronts).not.toContain("Stale front");
+
+    // Questions were NOT touched: the stale generated question survives, unlike
+    // in a full regenerate.
+    const prompts: string[] = body.kit.questions.map((x: StoredQuestion) => x.prompt);
+    expect(prompts).toContain("Stale generated question");
   });
 });

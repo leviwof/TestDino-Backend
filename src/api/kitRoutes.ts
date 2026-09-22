@@ -62,6 +62,13 @@ const BatchCreateBody = z.object({
   items: z.array(CreateKitBody).min(1).max(25),
 });
 
+/** Regenerate one named section, or the whole kit when `section` is omitted. */
+const RegenerateBody = z.object({
+  section: z
+    .enum(["company_brief", "role", "questions", "flashcards", "schedule", "coverage"])
+    .optional(),
+});
+
 const UpdateQuestionBody = z.object({
   prompt: z.string().min(1).optional(),
   answer_outline: z.string().optional(),
@@ -677,6 +684,10 @@ export function createKitRouter(deps: KitRouterDeps = {}): Router {
   router.post(
     "/:id/regenerate",
     asyncHandler(async (req, res) => {
+      // Optional `section` regenerates just that part of the kit; omitting it
+      // regenerates the whole kit (previous behaviour). Either way, edited,
+      // user-authored, and pinned questions are preserved by the regenerate seam.
+      const { section } = RegenerateBody.parse(req.body ?? {});
       const uid = userId(req);
       const record = await kits.findByIdForUser(req.params.id, uid);
       // 404 for both "missing" and "belongs to another user" (no existence leak).
@@ -702,9 +713,43 @@ export function createKitRouter(deps: KitRouterDeps = {}): Router {
         throw err;
       }
 
+      // For a single section, keep every other part of the existing kit exactly
+      // as it was (edits elsewhere are never lost) and swap in only the fresh
+      // section. For a full regenerate, replace the whole content.
+      let toSave: StoredKit;
+      if (section) {
+        toSave = { ...record.kit };
+        switch (section) {
+          case "company_brief":
+            toSave.company_brief = regenerated.company_brief;
+            break;
+          case "role":
+            toSave.role = regenerated.role;
+            break;
+          case "questions":
+            toSave.questions = regenerated.questions;
+            break;
+          case "flashcards":
+            toSave.flashcards = regenerated.flashcards;
+            break;
+          case "schedule":
+            toSave.schedule = regenerated.schedule;
+            break;
+          case "coverage":
+            toSave.coverage = regenerated.coverage;
+            break;
+        }
+      } else {
+        toSave = regenerated;
+      }
+
       // Only persist on success (atomic replace of the kit content).
-      const updated = await kits.setKitForUser(record.id, uid, regenerated);
-      res.status(200).json({ id: record.id, kit: updated?.kit ?? regenerated });
+      const updated = await kits.setKitForUser(record.id, uid, toSave);
+      res.status(200).json({
+        id: record.id,
+        section: section ?? null,
+        kit: updated?.kit ?? toSave,
+      });
     }),
   );
 
