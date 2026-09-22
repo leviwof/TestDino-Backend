@@ -19,5 +19,6 @@ npm-debug.log*
 .vscode/
 .idea/
 
-# Test coverage
-coverage/
+# Test coverage reports (root only). Anchored with a leading slash so it does
+# NOT also match src/coverage/, which is pipeline source code.
+/coverage/

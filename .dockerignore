@@ -5,4 +5,5 @@ dist
 .env.*
 !.env.example
 *.log
-coverage
+# Anchored so it doesn't exclude src/coverage/ (pipeline source code).
+/coverage
