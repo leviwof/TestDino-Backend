@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Production build
+dist/
+
+# Environment files (never commit real secrets)
+.env
+.env.*
+!.env.example
+
+# Logs and debug
+*.log
+npm-debug.log*
+
+# System and editor
+.DS_Store
+*.tsbuildinfo
+.vscode/
+.idea/
+
+# Test coverage
+coverage/

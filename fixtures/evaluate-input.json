@@ -1,0 +1,18 @@
+[
+  {
+    "id": "northwind-backend",
+    "jd": "Northwind Robotics is hiring a Senior Backend Engineer for our Fleet Services team. You will design and operate TypeScript/Node.js services that coordinate autonomous mobile robots across warehouses. Requirements: strong TypeScript and Node.js experience, solid understanding of relational databases (PostgreSQL), and experience designing reliable distributed systems. Nice to have: gRPC, Kubernetes, and observability tooling. You will collaborate closely with robotics and SRE teams and communicate clearly in writing.",
+    "company_url": "https://northwind-robotics.example.com",
+    "role": "Senior Backend Engineer",
+    "location": "Remote (North America)",
+    "days": 5
+  },
+  {
+    "id": "northwind-sre",
+    "jd": "Site Reliability Engineer at Northwind Robotics. Own the reliability and observability of services that control physical machines. Requirements: Kubernetes, Linux, incident response experience, and comfort with on-call. Nice to have: Prometheus, Grafana, and infrastructure-as-code.",
+    "company_url": "https://northwind-robotics.example.com",
+    "role": "Site Reliability Engineer",
+    "location": "Remote",
+    "days": 3
+  }
+]

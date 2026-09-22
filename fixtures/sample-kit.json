@@ -1,0 +1,88 @@
+{
+  "source": {
+    "company": "Acme Robotics",
+    "company_url": "https://acme.example.com",
+    "role": "Backend Engineer",
+    "location": "Remote (EU)",
+    "jd_chars": 1420,
+    "researched_at": "2026-09-21T10:00:00.000Z",
+    "pages_used": [
+      "https://acme.example.com/careers/backend-engineer",
+      "https://acme.example.com/about"
+    ]
+  },
+  "company_brief": {
+    "summary": "Acme Robotics builds warehouse automation systems.",
+    "what_they_do": "Autonomous mobile robots and the fleet-orchestration software that coordinates them.",
+    "sources": ["https://acme.example.com/about"]
+  },
+  "role": {
+    "title": "Backend Engineer",
+    "seniority": "mid",
+    "responsibilities": [
+      "Design and maintain fleet-coordination services",
+      "Own service reliability and on-call rotation"
+    ],
+    "requirements": [
+      {
+        "id": "r1",
+        "text": "Strong TypeScript / Node.js backend experience",
+        "kind": "technical",
+        "priority": "must"
+      },
+      {
+        "id": "r2",
+        "text": "Comfort operating distributed systems in production",
+        "kind": "domain",
+        "priority": "nice"
+      }
+    ]
+  },
+  "questions": [
+    {
+      "id": "q1",
+      "requirement_ids": ["r1"],
+      "category": "technical",
+      "prompt": "Walk through how you would design a rate limiter for an internal API.",
+      "answer_outline": "Token bucket vs sliding window; where state lives; distributed coordination; failure modes.",
+      "difficulty": 2
+    },
+    {
+      "id": "q2",
+      "requirement_ids": ["r2"],
+      "category": "system-design",
+      "prompt": "How would you coordinate 500 robots reporting position several times per second?",
+      "answer_outline": "Ingestion pipeline; backpressure; partitioning by zone; eventual vs strong consistency.",
+      "difficulty": 3
+    }
+  ],
+  "flashcards": [
+    {
+      "id": "f1",
+      "front": "What problem does a token-bucket rate limiter solve?",
+      "back": "It smooths bursty traffic by allowing a fixed refill rate with a burst allowance.",
+      "requirement_ids": ["r1"]
+    }
+  ],
+  "schedule": {
+    "days_available": 2,
+    "days": [
+      {
+        "day": 1,
+        "focus": "Core backend fundamentals",
+        "question_ids": ["q1"],
+        "minutes": 60
+      },
+      {
+        "day": 2,
+        "focus": "Distributed systems & design",
+        "question_ids": ["q2"],
+        "minutes": 60
+      }
+    ]
+  },
+  "coverage": {
+    "uncovered_requirement_ids": [],
+    "passes": 1
+  }
+}
