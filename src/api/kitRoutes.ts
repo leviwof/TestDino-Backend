@@ -833,5 +833,58 @@ export function createKitRouter(deps: KitRouterDeps = {}): Router {
     }),
   );
 
+  // Delete a question from the kit.
+  router.delete(
+    "/:id/questions/:questionId",
+    asyncHandler(async (req, res) => {
+      const uid = userId(req);
+      const record = await kits.findByIdForUser(req.params.id, uid);
+      if (!record) throw httpError(404, "not_found", "kit not found");
+      if (!record.kit) {
+        throw httpError(409, "not_generated", "kit has not been generated yet");
+      }
+
+      const idx = record.kit.questions.findIndex(
+        (q) => q.id === req.params.questionId,
+      );
+      if (idx === -1) {
+        throw httpError(404, "question_not_found", "question not found in kit");
+      }
+
+      record.kit.questions.splice(idx, 1);
+      await kits.setKitForUser(record.id, uid, record.kit);
+      res.status(200).json({ ok: true, id: req.params.questionId });
+    }),
+  );
+
+  // Reorder questions. Distinct top-level path (/:id/reorder) so it can't be
+  // mistaken for /:id/questions/:questionId. Reordering never marks a question
+  // as edited — it only rewrites the `order` field.
+  const ReorderBody = z.object({ order: z.array(z.string()).min(1) });
+  const handleReorder: RequestHandler = asyncHandler(async (req, res) => {
+    const { order } = ReorderBody.parse(req.body);
+    const uid = userId(req);
+    const record = await kits.findByIdForUser(req.params.id, uid);
+    if (!record) throw httpError(404, "not_found", "kit not found");
+    if (!record.kit) {
+      throw httpError(409, "not_generated", "kit has not been generated yet");
+    }
+
+    const rank = new Map(order.map((id, i) => [id, i]));
+    // Listed questions take the given order; any not listed keep a stable
+    // position after them (their existing order, offset past the listed block).
+    const base = order.length;
+    record.kit.questions.forEach((q, i) => {
+      const r = rank.get(q.id);
+      q.order = r !== undefined ? r : base + i;
+    });
+    record.kit.questions.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+
+    await kits.setKitForUser(record.id, uid, record.kit);
+    res.status(200).json({ questions: record.kit.questions });
+  });
+  router.patch("/:id/reorder", handleReorder);
+  router.post("/:id/reorder", handleReorder);
+
   return router;
 }

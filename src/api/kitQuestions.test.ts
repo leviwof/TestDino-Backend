@@ -409,4 +409,71 @@ describe("Question Management Backend APIs", () => {
       expect(res.status).toBe(400);
     });
   });
+
+  // ---- 4. DELETE & REORDER ----
+  describe("4. Delete & reorder", () => {
+    const q = (id: string, order: number): StoredQuestion => ({
+      id,
+      prompt: `Prompt ${id}`,
+      answer_outline: "",
+      category: "technical",
+      difficulty: 2,
+      requirement_ids: [],
+      origin: "generated",
+      edited: false,
+      pinned: false,
+      order,
+    });
+
+    it("DELETE removes a question; 404 for a missing one; owner-scoped", async () => {
+      const record = await repo.create({
+        userId: "user-1",
+        title: "Kit",
+        input: { jd: "jd", company_url: "https://example.com", days: 3 },
+        inputHash: "del-hash",
+      });
+      await repo.setKitForUser(record.id, "user-1", makeStoredKit([q("a", 0), q("b", 1)]));
+
+      const ok = await req("DELETE", `/kits/${record.id}/questions/a`, {
+        token: tokenFor("user-1"),
+      });
+      expect(ok.status).toBe(200);
+      const after = await repo.findByIdForUser(record.id, "user-1");
+      expect(after?.kit?.questions.map((x) => x.id)).toEqual(["b"]);
+
+      const missing = await req("DELETE", `/kits/${record.id}/questions/nope`, {
+        token: tokenFor("user-1"),
+      });
+      expect(missing.status).toBe(404);
+
+      const intruder = await req("DELETE", `/kits/${record.id}/questions/b`, {
+        token: tokenFor("intruder"),
+      });
+      expect(intruder.status).toBe(404);
+    });
+
+    it("PATCH /reorder rewrites order without marking questions edited", async () => {
+      const record = await repo.create({
+        userId: "user-1",
+        title: "Kit",
+        input: { jd: "jd", company_url: "https://example.com", days: 3 },
+        inputHash: "reorder-hash",
+      });
+      await repo.setKitForUser(
+        record.id,
+        "user-1",
+        makeStoredKit([q("a", 0), q("b", 1), q("c", 2)]),
+      );
+
+      const res = await req("PATCH", `/kits/${record.id}/reorder`, {
+        token: tokenFor("user-1"),
+        body: { order: ["c", "a", "b"] },
+      });
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.questions.map((x: StoredQuestion) => x.id)).toEqual(["c", "a", "b"]);
+      // Reordering must not flip the edited flag.
+      expect(data.questions.every((x: StoredQuestion) => x.edited === false)).toBe(true);
+    });
+  });
 });
